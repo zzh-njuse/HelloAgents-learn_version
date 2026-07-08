@@ -155,7 +155,7 @@ memory_tool.forget_old_memories(30)  # 清理30天前的低重要性记忆
 
 ### 基础安装
 ```bash
-pip install hello-agents==0.2.0
+pip install hello-agents==0.2.9
 ```
 
 ### 功能扩展安装（推荐）
@@ -164,22 +164,19 @@ pip install hello-agents==0.2.0
 
 ```bash
 # 🚀 完整体验（推荐）- 包含所有记忆和RAG功能
-pip install hello-agents[mem-rag]==0.2.0
+pip install hello-agents[memory-rag]==0.2.9
 
 # 🧠 仅记忆功能 - 支持对话记忆、知识存储
-pip install hello-agents[mem]==0.2.0
+pip install hello-agents[memory]==0.2.9
 
 # 📚 RAG功能 - 支持文档检索、知识问答
-pip install hello-agents[rag]==0.2.0
+pip install hello-agents[rag]==0.2.9
 
 # 🔍 搜索功能
-pip install hello-agents[search]==0.2.0
-
-# 🛠️ 开发环境
-pip install hello-agents[dev]==0.2.0
+pip install hello-agents[search]==0.2.9
 
 # 🌟 全功能安装
-pip install hello-agents[all]==0.2.0
+pip install hello-agents[all]==0.2.9
 ```
 
 ### 依赖说明
@@ -274,7 +271,7 @@ EMBED_MODEL_NAME="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 安装 HelloAgents 后，您可以直接运行以下代码：
 
 ```bash
-pip install hello-agents==0.2.0
+pip install hello-agents==0.2.9
 ```
 
 ### 基础使用 - SimpleAgent + 记忆工具
@@ -1499,7 +1496,7 @@ if __name__ == "__main__":
 
 ```bash
 # 🚀 一键安装完整功能（推荐）
-pip install hello-agents[mem-rag]==0.2.0
+pip install hello-agents[memory-rag]==0.2.9
 
 # 下载并运行示例
 python chapter08_memory_rag.py
@@ -1508,11 +1505,11 @@ python chapter08_memory_rag.py
 **或者分步安装：**
 ```bash
 # 基础安装
-pip install hello-agents==0.2.0
+pip install hello-agents==0.2.9
 
 # 根据需要添加功能
-pip install hello-agents[mem]==0.2.0      # 记忆功能
-pip install hello-agents[rag]==0.2.0      # RAG功能
+pip install hello-agents[memory]==0.2.9   # 记忆功能
+pip install hello-agents[rag]==0.2.9      # RAG功能
 ```
 
 或者直接复制粘贴本文档中的任何代码示例到您的Python文件中运行。
@@ -1555,13 +1552,13 @@ print("🎉 所有工具接口测试通过！")
 pip install chromadb
 
 # 或者安装记忆功能包
-pip install hello-agents[memory]==0.2.0
+pip install hello-agents[memory]==0.2.9
 ```
 
 **Q: 提示"请安装 sentence-transformers"**
 ```bash
 # 安装RAG功能
-pip install hello-agents[rag]==0.2.0
+pip install hello-agents[rag]==0.2.9
 
 # 或者系统会自动降级到huggingface模式
 # 或者明确指定使用huggingface
@@ -1667,8 +1664,8 @@ export EMBED_MODEL_TYPE="local"
 - 工具注册表集成：可以无缝集成到HelloAgents的工具系统中
 
 **安装选项：**
-- `pip install hello-agents[mem-rag]==0.2.0` - 完整功能
-- `pip install hello-agents[mem]==0.2.0` - 仅记忆功能
-- `pip install hello-agents[rag]==0.2.0` - RAG功能
+- `pip install hello-agents[memory-rag]==0.2.9` - 完整功能
+- `pip install hello-agents[memory]==0.2.9` - 仅记忆功能
+- `pip install hello-agents[rag]==0.2.9` - RAG功能
 
 *本文档基于实际代码测试编写，确保所有示例都可以正常运行。如有问题请提交Issue或Pull Request。*

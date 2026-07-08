@@ -71,7 +71,8 @@ class MemoryTool(Tool):
                 memory_type=parameters.get("memory_type", "working"),
                 importance=parameters.get("importance", 0.5),
                 file_path=parameters.get("file_path"),
-                modality=parameters.get("modality")
+                modality=parameters.get("modality"),
+                metadata=parameters.get("metadata")
             )
         elif action == "search":
             return self._search_memory(
@@ -130,6 +131,7 @@ class MemoryTool(Tool):
             ToolParameter(name="memory_id", type="string", description="目标记忆ID（update/remove时必需）", required=False),
             ToolParameter(name="file_path", type="string", description="感知记忆：本地文件路径（image/audio）", required=False),
             ToolParameter(name="modality", type="string", description="感知记忆模态：text/image/audio（不传则按扩展名推断）", required=False),
+            ToolParameter(name="metadata", type="object", description="附加元数据（add时可用）", required=False),
             ToolParameter(name="strategy", type="string", description="遗忘策略：importance_based/time_based/capacity_based（forget时可用）", required=False, default="importance_based"),
             ToolParameter(name="threshold", type="number", description="遗忘阈值（forget时可用，默认0.1）", required=False, default=0.1),
             ToolParameter(name="max_age_days", type="integer", description="最大保留天数（forget策略为time_based时可用）", required=False, default=30),
@@ -145,7 +147,8 @@ class MemoryTool(Tool):
         memory_type: str = "working",
         importance: float = 0.5,
         file_path: str = None,
-        modality: str = None
+        modality: str = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """添加记忆
 
@@ -155,11 +158,12 @@ class MemoryTool(Tool):
             importance: 重要性分数，0.0-1.0
             file_path: 感知记忆：本地文件路径（image/audio）
             modality: 感知记忆模态：text/image/audio（不传则按扩展名推断）
+            metadata: 附加元数据
 
         Returns:
             执行结果
         """
-        metadata = {}
+        metadata_payload = dict(metadata or {})
         try:
             # 确保会话ID存在
             if self.current_session_id is None:
@@ -168,11 +172,11 @@ class MemoryTool(Tool):
             # 感知记忆文件支持：注入 raw_data 与模态
             if memory_type == "perceptual" and file_path:
                 inferred = modality or self._infer_modality(file_path)
-                metadata.setdefault("modality", inferred)
-                metadata.setdefault("raw_data", file_path)
+                metadata_payload.setdefault("modality", inferred)
+                metadata_payload.setdefault("raw_data", file_path)
 
             # 添加会话信息到元数据
-            metadata.update({
+            metadata_payload.update({
                 "session_id": self.current_session_id,
                 "timestamp": datetime.now().isoformat()
             })
@@ -181,7 +185,7 @@ class MemoryTool(Tool):
                 content=content,
                 memory_type=memory_type,
                 importance=importance,
-                metadata=metadata,
+                metadata=metadata_payload,
                 auto_classify=False  # 禁用自动分类，使用明确指定的类型
             )
 
@@ -367,8 +371,10 @@ class MemoryTool(Tool):
             content=f"用户: {user_input}",
             memory_type="working",
             importance=0.6,
-            type="user_input",
-            conversation_id=self.conversation_count
+            metadata={
+                "type": "user_input",
+                "conversation_id": self.conversation_count,
+            }
         )
 
         # 记录Agent响应
@@ -376,8 +382,10 @@ class MemoryTool(Tool):
             content=f"助手: {agent_response}",
             memory_type="working",
             importance=0.7,
-            type="agent_response",
-            conversation_id=self.conversation_count
+            metadata={
+                "type": "agent_response",
+                "conversation_id": self.conversation_count,
+            }
         )
 
         # 如果是重要对话，记录为情景记忆
@@ -387,8 +395,10 @@ class MemoryTool(Tool):
                 content=interaction_content,
                 memory_type="episodic",
                 importance=0.8,
-                type="interaction",
-                conversation_id=self.conversation_count
+                metadata={
+                    "type": "interaction",
+                    "conversation_id": self.conversation_count,
+                }
             )
 
     @tool_action("memory_update", "更新已存在的记忆")
@@ -497,8 +507,10 @@ class MemoryTool(Tool):
             content=content,
             memory_type="semantic",
             importance=importance,
-            knowledge_type="factual",
-            source="manual"
+            metadata={
+                "knowledge_type": "factual",
+                "source": "manual",
+            }
         )
 
     def get_context_for_query(self, query: str, limit: int = 3) -> str:
@@ -541,4 +553,3 @@ class MemoryTool(Tool):
             strategy="time_based",
             max_age_days=max_age_days
         )
-

@@ -227,6 +227,8 @@ class QdrantVectorStore:
                 ("is_rag_data", models.PayloadSchemaType.BOOL),
                 ("rag_namespace", models.PayloadSchemaType.KEYWORD),
                 ("data_source", models.PayloadSchemaType.KEYWORD),
+                ("source_path", models.PayloadSchemaType.KEYWORD),
+                ("doc_id", models.PayloadSchemaType.KEYWORD),
             ]
             for field_name, schema_type in index_fields:
                 try:
@@ -450,6 +452,44 @@ class QdrantVectorStore:
             
         except Exception as e:
             logger.error(f"❌ 删除向量失败: {e}")
+            return False
+
+    def delete_by_filter(self, where: Dict[str, Any]) -> bool:
+        """按 payload 等值过滤删除向量。
+
+        Args:
+            where: payload 等值过滤条件，多个字段之间为 AND 关系。
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            if not where:
+                return True
+
+            conditions = []
+            for key, value in where.items():
+                if isinstance(value, (str, int, float, bool)):
+                    conditions.append(
+                        FieldCondition(
+                            key=key,
+                            match=MatchValue(value=value)
+                        )
+                    )
+
+            if not conditions:
+                return True
+
+            query_filter = Filter(must=conditions)
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.FilterSelector(filter=query_filter),
+                wait=True,
+            )
+            logger.info("✅ 成功按payload过滤删除Qdrant向量: %s", where)
+            return True
+        except Exception as e:
+            logger.error(f"❌ 按payload过滤删除向量失败: {e}")
             return False
     
     def clear_collection(self) -> bool:

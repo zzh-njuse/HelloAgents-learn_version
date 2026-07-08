@@ -124,3 +124,62 @@ def test_async_executor_batch_helper_runs_tools():
 
     assert [item["status"] for item in results] == ["success", "success"]
     assert [item["result"] for item in results] == ["4", "15"]
+
+
+def test_rag_tool_keeps_documented_compatibility_actions():
+    from hello_agents.tools.builtin.rag_tool import RAGTool
+
+    class StubRAGTool(RAGTool):
+        def __init__(self):
+            self.initialized = True
+            self.rag_namespace = "default"
+
+        def validate_parameters(self, parameters):
+            return "action" in parameters
+
+        def get_relevant_context(self, query, limit=3, max_chars=1200, namespace=None):
+            return f"context:{query}:{limit}:{namespace}"
+
+        def _update_document(self, document_id, text=None, file_path=None, namespace="default", chunk_size=800, chunk_overlap=100):
+            return f"updated:{document_id}:{namespace}"
+
+        def _remove_document(self, document_id=None, file_path=None, namespace="default", missing_ok=False):
+            return f"removed:{document_id}:{namespace}"
+
+        def _clear_knowledge_base(self, confirm=False, namespace="default"):
+            return f"cleared:{confirm}:{namespace}"
+
+    tool = StubRAGTool()
+
+    assert tool.run({"action": "get_context", "query": "python", "limit": 2}) == "context:python:2:default"
+    assert tool.run({"action": "update_document", "document_id": "doc1"}) == "updated:doc1:default"
+    assert tool.run({"action": "remove_document", "document_id": "doc1"}) == "removed:doc1:default"
+    assert tool.run({"action": "clear_kb", "confirm": True}) == "cleared:True:default"
+
+
+def test_memory_tool_add_memory_accepts_metadata():
+    from hello_agents.tools.builtin.memory_tool import MemoryTool
+
+    class FakeMemoryManager:
+        def __init__(self):
+            self.calls = []
+
+        def add_memory(self, **kwargs):
+            self.calls.append(kwargs)
+            return "memory-id-123"
+
+    tool = object.__new__(MemoryTool)
+    tool.current_session_id = None
+    tool.memory_manager = FakeMemoryManager()
+
+    result = tool._add_memory(
+        content="用户喜欢例子驱动的讲解",
+        memory_type="semantic",
+        importance=0.9,
+        metadata={"type": "learning_preference"},
+    )
+
+    assert "记忆已添加" in result
+    metadata = tool.memory_manager.calls[0]["metadata"]
+    assert metadata["type"] == "learning_preference"
+    assert metadata["session_id"].startswith("session_")

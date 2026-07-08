@@ -21,6 +21,7 @@ answer = rag.run({"action": "ask", "question": "什么是机器学习？"})
 
 from typing import Dict, Any, List, Optional
 import os
+import re
 import time
 
 from ..base import Tool, ToolParameter, tool_action
@@ -44,6 +45,8 @@ class RAGTool(Tool):
         qdrant_api_key: str = None,
         collection_name: str = "rag_knowledge_base",
         rag_namespace: str = "default",
+        embedding_model: Optional[str] = None,
+        embedding_model_name: Optional[str] = None,
         expandable: bool = False
     ):
         super().__init__(
@@ -57,7 +60,10 @@ class RAGTool(Tool):
         self.qdrant_api_key = qdrant_api_key or os.getenv("QDRANT_API_KEY")
         self.collection_name = collection_name
         self.rag_namespace = rag_namespace
+        self.embedding_model = embedding_model
+        self.embedding_model_name = embedding_model_name
         self._pipelines: Dict[str, Dict[str, Any]] = {}
+        self._document_sources: Dict[str, Dict[str, str]] = {}
         
         # 确保知识库目录存在
         os.makedirs(knowledge_base_path, exist_ok=True)
@@ -68,6 +74,8 @@ class RAGTool(Tool):
     def _init_components(self):
         """初始化RAG组件"""
         try:
+            self._configure_embedding()
+
             # 初始化默认命名空间的 RAG 管道
             default_pipeline = create_rag_pipeline(
                 qdrant_url=self.qdrant_url,
@@ -88,6 +96,45 @@ class RAGTool(Tool):
             self.init_error = str(e)
             print(f"❌ RAG工具初始化失败: {e}")
 
+    def _configure_embedding(self):
+        """根据构造参数配置统一嵌入模型。
+
+        兼容旧文档和示例中的 ``embedding_model=...`` 写法。该参数既可以是
+        ``local``/``dashscope``/``tfidf`` 这类模型类型，也可以是具体的本地
+        sentence-transformers 模型名。
+        """
+        if not self.embedding_model and not self.embedding_model_name:
+            return
+
+        if self.embedding_model:
+            model_type = self._normalize_embedding_type(self.embedding_model)
+            if model_type:
+                os.environ["EMBED_MODEL_TYPE"] = model_type
+            else:
+                os.environ["EMBED_MODEL_TYPE"] = "local"
+                os.environ["EMBED_MODEL_NAME"] = self.embedding_model
+
+        if self.embedding_model_name:
+            os.environ["EMBED_MODEL_NAME"] = self.embedding_model_name
+
+        from ...memory.embedding import refresh_embedder
+        refresh_embedder()
+
+    @staticmethod
+    def _normalize_embedding_type(value: str) -> Optional[str]:
+        normalized = (value or "").strip().lower()
+        aliases = {
+            "sentence-transformers": "local",
+            "sentence_transformers": "local",
+            "sentence_transformer": "local",
+            "huggingface": "local",
+            "hf": "local",
+            "local": "local",
+            "dashscope": "dashscope",
+            "tfidf": "tfidf",
+        }
+        return aliases.get(normalized)
+
     def _get_pipeline(self, namespace: Optional[str] = None) -> Dict[str, Any]:
         """获取指定命名空间的 RAG 管道，若不存在则自动创建"""
         target_ns = namespace or self.rag_namespace
@@ -102,6 +149,41 @@ class RAGTool(Tool):
         )
         self._pipelines[target_ns] = pipeline
         return pipeline
+
+    def _resolve_namespace(self, namespace: Optional[str] = None) -> str:
+        return namespace or self.rag_namespace
+
+    @staticmethod
+    def _safe_document_id(document_id: str) -> str:
+        safe_id = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(document_id or "").strip())
+        return safe_id.strip("._-") or "document"
+
+    def _text_source_path(self, document_id: str, namespace: str) -> str:
+        safe_id = self._safe_document_id(document_id)
+        namespace_dir = os.path.join(self.knowledge_base_path, self._safe_document_id(namespace))
+        os.makedirs(namespace_dir, exist_ok=True)
+        return os.path.abspath(os.path.join(namespace_dir, f"{safe_id}.md"))
+
+    def _remember_document_source(self, namespace: str, document_id: str, source_path: str) -> None:
+        if not document_id:
+            return
+        ns = self._resolve_namespace(namespace)
+        self._document_sources.setdefault(ns, {})[document_id] = os.path.abspath(source_path)
+
+    def _known_document_source(self, namespace: str, document_id: str) -> Optional[str]:
+        ns = self._resolve_namespace(namespace)
+        return self._document_sources.get(ns, {}).get(document_id)
+
+    def _delete_vectors_for_source(self, namespace: str, source_path: str) -> bool:
+        pipeline = self._get_pipeline(namespace)
+        store = pipeline.get("store")
+        if not store or not hasattr(store, "delete_by_filter"):
+            return False
+        return store.delete_by_filter({
+            "source_path": os.path.abspath(source_path),
+            "rag_namespace": self._resolve_namespace(namespace),
+            "memory_type": "rag_chunk",
+        })
 
     def run(self, parameters: Dict[str, Any]) -> str:
         """执行工具（非展开模式）
@@ -119,6 +201,7 @@ class RAGTool(Tool):
             return f"❌ RAG工具未正确初始化，请检查配置: {getattr(self, 'init_error', '未知错误')}"
 
         action = parameters.get("action")
+        namespace = self._resolve_namespace(parameters.get("namespace"))
 
         # 根据action调用对应的方法，传入提取的参数
         try:
@@ -126,7 +209,7 @@ class RAGTool(Tool):
                 return self._add_document(
                     file_path=parameters.get("file_path"),
                     document_id=parameters.get("document_id"),
-                    namespace=parameters.get("namespace", "default"),
+                    namespace=namespace,
                     chunk_size=parameters.get("chunk_size", 800),
                     chunk_overlap=parameters.get("chunk_overlap", 100)
                 )
@@ -134,7 +217,7 @@ class RAGTool(Tool):
                 return self._add_text(
                     text=parameters.get("text"),
                     document_id=parameters.get("document_id"),
-                    namespace=parameters.get("namespace", "default"),
+                    namespace=namespace,
                     chunk_size=parameters.get("chunk_size", 800),
                     chunk_overlap=parameters.get("chunk_overlap", 100)
                 )
@@ -146,7 +229,7 @@ class RAGTool(Tool):
                     enable_advanced_search=parameters.get("enable_advanced_search", True),
                     include_citations=parameters.get("include_citations", True),
                     max_chars=parameters.get("max_chars", 1200),
-                    namespace=parameters.get("namespace", "default")
+                    namespace=namespace
                 )
             elif action == "search":
                 return self._search(
@@ -156,14 +239,37 @@ class RAGTool(Tool):
                     enable_advanced_search=parameters.get("enable_advanced_search", True),
                     max_chars=parameters.get("max_chars", 1200),
                     include_citations=parameters.get("include_citations", True),
-                    namespace=parameters.get("namespace", "default")
+                    namespace=namespace
+                )
+            elif action == "get_context":
+                context = self.get_relevant_context(
+                    query=parameters.get("query") or parameters.get("question"),
+                    limit=parameters.get("limit", 3),
+                    max_chars=parameters.get("max_chars", 1200),
+                    namespace=namespace
+                )
+                return context or "🔍 未找到相关上下文"
+            elif action == "update_document":
+                return self._update_document(
+                    document_id=parameters.get("document_id"),
+                    text=parameters.get("text"),
+                    file_path=parameters.get("file_path"),
+                    namespace=namespace,
+                    chunk_size=parameters.get("chunk_size", 800),
+                    chunk_overlap=parameters.get("chunk_overlap", 100)
+                )
+            elif action == "remove_document":
+                return self._remove_document(
+                    document_id=parameters.get("document_id"),
+                    file_path=parameters.get("file_path"),
+                    namespace=namespace
                 )
             elif action == "stats":
-                return self._get_stats(namespace=parameters.get("namespace", "default"))
-            elif action == "clear":
+                return self._get_stats(namespace=namespace)
+            elif action in {"clear", "clear_kb"}:
                 return self._clear_knowledge_base(
                     confirm=parameters.get("confirm", False),
-                    namespace=parameters.get("namespace", "default")
+                    namespace=namespace
                 )
             else:
                 return f"❌ 不支持的操作: {action}"
@@ -177,7 +283,11 @@ class RAGTool(Tool):
             ToolParameter(
                 name="action",
                 type="string",
-                description="操作类型：add_document(添加文档), add_text(添加文本), ask(智能问答), search(搜索), stats(统计), clear(清空)",
+                description=(
+                    "操作类型：add_document(添加文档), add_text(添加文本), ask(智能问答), "
+                    "search(搜索), get_context(获取上下文), update_document(更新文档), "
+                    "remove_document(删除文档), stats(统计), clear/clear_kb(清空)"
+                ),
                 required=True
             ),
             
@@ -204,6 +314,12 @@ class RAGTool(Tool):
                 name="query",
                 type="string",
                 description="搜索查询词（用于基础搜索）",
+                required=False
+            ),
+            ToolParameter(
+                name="document_id",
+                type="string",
+                description="文档ID（添加、更新、删除文档时可用）",
                 required=False
             ),
             
@@ -255,12 +371,16 @@ class RAGTool(Tool):
         try:
             if not file_path or not os.path.exists(file_path):
                 return f"❌ 文件不存在: {file_path}"
+
+            source_path = os.path.abspath(file_path)
+            if document_id:
+                self._delete_vectors_for_source(namespace, source_path)
             
             pipeline = self._get_pipeline(namespace)
             t0 = time.time()
 
             chunks_added = pipeline["add_documents"](
-                file_paths=[file_path],
+                file_paths=[source_path],
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap
             )
@@ -271,6 +391,8 @@ class RAGTool(Tool):
             if chunks_added == 0:
                 return f"⚠️ 未能从文件解析内容: {os.path.basename(file_path)}"
             
+            self._remember_document_source(namespace, document_id or os.path.basename(source_path), source_path)
+
             return (
                 f"✅ 文档已添加到知识库: {os.path.basename(file_path)}\n"
                 f"📊 分块数量: {chunks_added}\n"
@@ -302,48 +424,40 @@ class RAGTool(Tool):
         Returns:
             执行结果
         """
-        metadata = None
         try:
             if not text or not text.strip():
                 return "❌ 文本内容不能为空"
             
-            # 创建临时文件
             document_id = document_id or f"text_{abs(hash(text)) % 100000}"
-            tmp_path = os.path.join(self.knowledge_base_path, f"{document_id}.md")
+            source_path = self._text_source_path(document_id, namespace)
+            self._delete_vectors_for_source(namespace, source_path)
             
-            try:
-                with open(tmp_path, 'w', encoding='utf-8') as f:
-                    f.write(text)
-                
-                pipeline = self._get_pipeline(namespace)
-                t0 = time.time()
+            with open(source_path, 'w', encoding='utf-8') as f:
+                f.write(text)
 
-                chunks_added = pipeline["add_documents"](
-                    file_paths=[tmp_path],
-                    chunk_size=chunk_size,
-                    chunk_overlap=chunk_overlap
-                )
-                
-                t1 = time.time()
-                process_ms = int((t1 - t0) * 1000)
-                
-                if chunks_added == 0:
-                    return f"⚠️ 未能从文本生成有效分块"
-                
-                return (
-                    f"✅ 文本已添加到知识库: {document_id}\n"
-                    f"📊 分块数量: {chunks_added}\n"
-                    f"⏱️ 处理时间: {process_ms}ms\n"
-                    f"📝 命名空间: {pipeline.get('namespace', self.rag_namespace)}"
-                )
-                
-            finally:
-                # 清理临时文件
-                try:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                except Exception:
-                    pass
+            pipeline = self._get_pipeline(namespace)
+            t0 = time.time()
+
+            chunks_added = pipeline["add_documents"](
+                file_paths=[source_path],
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap
+            )
+
+            t1 = time.time()
+            process_ms = int((t1 - t0) * 1000)
+
+            if chunks_added == 0:
+                return f"⚠️ 未能从文本生成有效分块"
+
+            self._remember_document_source(namespace, document_id, source_path)
+
+            return (
+                f"✅ 文本已添加到知识库: {document_id}\n"
+                f"📊 分块数量: {chunks_added}\n"
+                f"⏱️ 处理时间: {process_ms}ms\n"
+                f"📝 命名空间: {pipeline.get('namespace', self.rag_namespace)}"
+            )
             
         except Exception as e:
             return f"❌ 添加文本失败: {str(e)}"
@@ -427,6 +541,83 @@ class RAGTool(Tool):
             
         except Exception as e:
             return f"❌ 搜索失败: {str(e)}"
+
+    def _update_document(
+        self,
+        document_id: str,
+        text: str = None,
+        file_path: str = None,
+        namespace: str = "default",
+        chunk_size: int = 800,
+        chunk_overlap: int = 100
+    ) -> str:
+        """更新文档：先移除旧索引，再重新添加文本或文件。"""
+        if not document_id:
+            return "❌ 更新文档需要提供 document_id"
+
+        self._remove_document(document_id=document_id, file_path=file_path, namespace=namespace, missing_ok=True)
+
+        if file_path:
+            return self._add_document(
+                file_path=file_path,
+                document_id=document_id,
+                namespace=namespace,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+
+        if text is not None:
+            return self._add_text(
+                text=text,
+                document_id=document_id,
+                namespace=namespace,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+
+        return "❌ 更新文档需要提供 text 或 file_path"
+
+    def _remove_document(
+        self,
+        document_id: str = None,
+        file_path: str = None,
+        namespace: str = "default",
+        missing_ok: bool = False
+    ) -> str:
+        """按文档ID或源文件路径删除知识库中的文档分块。"""
+        try:
+            source_path = None
+            if file_path:
+                source_path = os.path.abspath(file_path)
+            elif document_id:
+                source_path = self._known_document_source(namespace, document_id)
+                if not source_path:
+                    candidate = self._text_source_path(document_id, namespace)
+                    if os.path.exists(candidate):
+                        source_path = candidate
+
+            if not source_path:
+                if missing_ok:
+                    return "⚠️ 未找到旧文档索引，已跳过删除"
+                return "❌ 删除文档需要提供 document_id 或 file_path"
+
+            success = self._delete_vectors_for_source(namespace, source_path)
+
+            if document_id:
+                self._document_sources.get(self._resolve_namespace(namespace), {}).pop(document_id, None)
+
+            if document_id and source_path == self._text_source_path(document_id, namespace):
+                try:
+                    if os.path.exists(source_path):
+                        os.remove(source_path)
+                except Exception:
+                    pass
+
+            if success:
+                return f"✅ 文档已从知识库删除: {document_id or os.path.basename(source_path)}"
+            return "⚠️ 删除请求已执行，但底层向量存储未确认删除成功"
+        except Exception as e:
+            return f"❌ 删除文档失败: {str(e)}"
     
     @tool_action("rag_ask", "基于知识库进行智能问答")
     def _ask(
@@ -959,4 +1150,3 @@ class RAGTool(Tool):
             summary.extend(results)
 
         return "\n".join(summary)
-
