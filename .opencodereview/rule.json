@@ -1,0 +1,26 @@
+{
+  "rules": [
+    {
+      "path": "hello_agents/**/*.py",
+      "rule": "Review changes for public API compatibility, tool schema drift, async/sync boundary mistakes, exception swallowing that hides failures, and missing regression tests. Pay special attention to RAG, memory, MCP, and LLM provider behavior.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "apps/**/*.{py,ts,tsx,js,jsx}",
+      "rule": "Review self-host product code for tenant/workspace isolation, unsafe file path handling, secret leakage, missing input validation, missing job-state transitions, and incomplete error reporting.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/*migration*.py",
+      "rule": "Check database migrations for reversible behavior, data-loss risk, missing indexes, foreign-key integrity, and compatibility with self-host upgrades."
+    },
+    {
+      "path": "**/{docker-compose.yml,Dockerfile,.env.example}",
+      "rule": "Check self-host deployment files for secret defaults, persistent volumes, health checks, least-privilege configuration, and clear local development defaults."
+    },
+    {
+      "path": "tests/**/*.py",
+      "rule": "Check whether tests cover the changed behavior instead of only implementation details. Flag brittle mocks, missing failure cases, and missing regression coverage."
+    }
+  ]
+}

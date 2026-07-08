@@ -123,9 +123,10 @@
 
 建议沉淀的协作产物：
 
-- `docs/specs/`：每个功能一份 spec。
-- `docs/adr/`：架构决策记录，比如为什么选 Qdrant、为什么 Neo4j 后置。
-- `docs/evals/`：评测集设计和结果。
+- `docs/<NN-stage-name>/specs/`：每个功能一份 spec。
+- `docs/<NN-stage-name>/adr/`：架构决策记录，比如为什么选 Qdrant、为什么 Neo4j 后置。
+- `docs/<NN-stage-name>/evals/`：评测集设计和结果。
+- `docs/<NN-stage-name>/reviews/`：OCR/CR review 摘要和采纳/拒绝原因。
 - `AGENTS.md`：给 coding agent 的仓库约定，包含测试命令、禁止事项、风格约束。
 - `prompts/` 或 `skills/`：可复用的开发技能，如“写 FastAPI CRUD”“补 RAG eval”“做 UI 截图审查”。
 
@@ -144,7 +145,19 @@
 - 怎么省 token：先给文件地图和 spec，不让 agent 全仓乱读；把反复出现的要求写进 `AGENTS.md`/技能；让 agent 输出检查清单而不是长篇解释；用测试和日志替代自然语言确认。
 - 怎么保证质量：小步 PR、强测试、trace、eval、自动截图、review bot、人工只审关键决策。
 
-如果导师的阿里 CR 开源项目是代码评审或变更审查相关，最好的接入方式不是“拿来替代 Codex”，而是作为 PR gate：agent 实现后，CR 项目做结构化 review，再由 Codex 根据 review comment 修复，最后你做最终裁决。
+导师的阿里 CR 开源项目已经可以落到本机流程里：当前 Codex skill 名为 `ocr-codex-app`，位置是 `C:\Users\Admin\.codex\skills\ocr-codex-app`，它封装本地 OpenCodeReview CLI。CLI 不在 PATH 里，但可直接调用 `C:\Users\Admin\bin\ocr.exe`；`ocr version` 返回 `open-code-review dev windows/amd64`，在干净工作树上 `ocr review --preview` 能正常返回 `No files changed.`。在 Codex App 的沙箱里，OCR 首次写入 `C:\Users\Admin\.opencodereview\sessions` 可能需要授权；授权后预览流程可用。当前预览也暴露了一个边界：Markdown 文档会被标为 `unsupported_ext` 并排除，所以 OCR 更适合作为代码 diff 的审查门禁，而不是文档审校工具。它的最佳接入方式不是“拿来替代 Codex”，而是作为独立 PR gate：agent 实现后，OCR 做结构化 review，再由 Codex 根据 review comment 修复，最后你做最终裁决。
+
+建议把协作流程升级为：
+
+1. `spec`：先写清用户故事、验收标准、边界和禁止修改范围。
+2. `implement`：Codex 按 spec 小步实现，并补测试。
+3. `self-review`：Codex 先做一次普通代码审查，消掉明显问题。
+4. `ocr-preview`：运行 `C:\Users\Admin\bin\ocr.exe review --preview`，确认评审范围没有误包含无关文件。
+5. `ocr-review`：需要真实审查时运行 `C:\Users\Admin\bin\ocr.exe review --audience agent --background "<业务背景>"`；这一步会消耗 OCR 自己配置的 LLM provider 额度，不消耗 Codex App 额度。
+6. `fix`：只自动修 High 和高置信 Medium；Low 级建议记录但不盲改。
+7. `verify`：跑 pytest/lint/eval，必要时再做一次 OCR 复审，但避免无限 review loop。
+
+这个流程的价值在于形成“agent 写、另一个 reviewer 审、agent 修、人最终裁决”的闭环。面试时可以把它讲成一种可复用的 agent-assisted engineering workflow，而不是简单的人机对话。
 
 ### 2.4 学习平台主线
 
@@ -292,9 +305,16 @@ apps/
       features/
       lib/
 docs/
-  specs/
-  adr/
-  evals/
+  01-stage-0-foundation/
+    specs/
+    adr/
+    evals/
+    reviews/
+  02-stage-1-self-host-platform/
+    specs/
+    adr/
+    evals/
+    reviews/
 hello_agents/
   ...保留为 agent framework 层
 ```
@@ -304,7 +324,7 @@ hello_agents/
 - `hello_agents`：保持框架能力，Agent、Tool、Memory、RAG、Protocol。
 - `apps/api`：产品业务，用户、课程、资料、练习、任务、权限。
 - `apps/web`：用户体验。
-- `docs/specs`：开发协作资产。
+- 阶段目录下的 `specs/`、`adr/`、`evals/`、`reviews/`：开发协作资产。
 
 这样面试里可以讲清楚：我没有把 demo 越写越乱，而是把框架层和产品层拆开了。
 
@@ -331,6 +351,8 @@ hello_agents/
 | `memories` | 产品级记忆索引，可映射到 MemoryTool |
 | `agent_runs` | 每次 agent run 的输入、输出、状态、耗时、模型 |
 | `tool_calls` | 工具调用轨迹、参数、结果摘要、错误 |
+| `code_review_runs` | OCR/CR 审查记录，包含范围、commit/ref、背景、模型、耗时、结论 |
+| `code_review_findings` | OCR/CR 发现项，包含文件、行号、严重级别、采纳状态和修复 commit |
 | `eval_cases` | 评测样例 |
 | `eval_results` | 评测结果 |
 | `cost_events` | token、费用、缓存命中 |
@@ -415,6 +437,16 @@ RAG 不适合：
 2. 开发协作 skill：面向你和 coding agent 的工作流，比如“写 spec”“补 eval”“做 PR review”“前端截图验收”。
 
 第一阶段更建议先沉淀开发协作 skill，因为它能直接提高项目产出质量，也能在面试中讲出个人方法论。
+
+当前已经有一个可用的开发协作 skill：`ocr-codex-app`。它的触发场景是“让 Codex 调用本地 OpenCodeReview 审当前 diff、某个 commit、分支差异，或者扫描指定文件”。推荐用法：
+
+- 当前改动审查：`C:\Users\Admin\bin\ocr.exe review --audience agent --background "<业务背景>"`。
+- 单 commit 审查：`C:\Users\Admin\bin\ocr.exe review --audience agent --commit <sha> --background "<业务背景>"`。
+- 分支对比审查：`C:\Users\Admin\bin\ocr.exe review --audience agent --from main --to <branch> --background "<业务背景>"`。
+- 无 diff 的全文件扫描：`C:\Users\Admin\bin\ocr.exe scan --audience agent --path <path> --background "<业务背景>"`。
+- 不调用 LLM 的范围预览：`C:\Users\Admin\bin\ocr.exe review --preview` 或 `scan --preview --path <path>`。
+
+注意边界：真实 `review`/`scan` 会走 OCR 自己的 LLM 配置和 API key，应该在明确需要审查时再运行；`preview`、`version`、`-h` 和 provider 列表属于安全预检。当前 OCR 会排除 Markdown 这类不支持的扩展名，因此文档类产物仍由 Codex review 和人工审阅兜底。OCR 输出只作为工程审查建议，不能替代测试、类型检查、安全审计和人工最终裁决。
 
 ### 7.4 哪里用 MCP
 
@@ -553,7 +585,7 @@ RAGAS 这类工具已经把 RAG 和 agent/tool use 评测拆成 context precisio
 - 增加真实 Memory/RAG 主路径测试，尤其是 Qdrant、embedding、文档更新/删除、失败恢复。
 - 把 `chapter09_context_engineering.py` 从 TODO 改成可运行示例，连接 `ContextBuilder`。
 - 给 README 增加“当前状态”和“平台化路线”。
-- 建立 `docs/specs`、`docs/adr`、`docs/evals`。
+- 建立阶段化文档目录，例如 `docs/01-stage-0-foundation/`，并在阶段内使用 `specs/`、`adr/`、`evals/`、`reviews/`。
 
 验收：
 
@@ -617,21 +649,25 @@ RAGAS 这类工具已经把 RAG 和 agent/tool use 评测拆成 context precisio
 - 面试时能展示“这不是感觉效果好，而是有指标”。
 - 每个 workspace 能看到处理成本。
 
-### Phase 4：Agent 协作开发展示
+### 横切机制：Agent 协作开发
 
-目标：证明你熟练和 agent 共同开发。
+目标：从现在开始，每个阶段都用同一套 agent-assisted engineering workflow 开发；Phase 4 只负责把过程整理成面试案例，而不是到那时才开始建设。
 
 任务：
 
-- 写 `AGENTS.md`。
-- 建立 spec -> implement -> review -> test -> eval 流程。
-- 接入 CR 项目作为 PR review gate。
+- 已完成：写根目录 `AGENTS.md`，让 Codex 每次进入仓库时都能拿到项目边界、测试命令、review 规则和 self-host 方向。
+- 已完成：新增 `docs/AGENT_COLLABORATION_PLAYBOOK.md`，把 spec -> plan -> implement -> test -> review -> fix -> verify -> retrospective 作为默认开发闭环。
+- 建立每个功能的 spec -> implement -> review -> test -> eval 流程。
+- 接入本机 `ocr-codex-app`/OpenCodeReview 作为 PR review gate：先 `review --preview` 确认范围，再 `review --audience agent --background ...` 获取结构化审查意见。
+- 已完成：为 OCR 增加项目级规则文件 `.opencodereview/rule.json`，重点检查 agent runtime、RAG 数据一致性、权限边界、删除/迁移类风险和测试缺口。
+- 把重复出现的任务沉淀为项目 skill，例如 `self-host-feature`、`db-schema-change`、`rag-eval`、`frontend-qa`、`ocr-review-gate`。
 - 做一次长时间无审核开发实验，并写复盘。
-- 把 agent run trace 和 PR 过程做成案例。
+- 到 Phase 4 时，把 agent run trace、PR 过程、OCR review、测试结果和复盘做成案例。
 
 验收：
 
 - 至少 3 个功能通过“spec + agent 实现 + review + test”完成。
+- 每个功能 PR 都保留一次 OCR preview 结果、真实 review 摘要、采纳/拒绝原因和后续验证命令。
 - 有一份复盘文档，包含成功率、失败模式、token 成本和改进策略。
 
 ## 12. 近期两周行动建议
@@ -640,9 +676,10 @@ RAGAS 这类工具已经把 RAG 和 agent/tool use 评测拆成 context precisio
 
 1. 已完成：修复 RAGTool 和 MemoryTool 的当前代码/文档漂移。
 2. 已完成：补 RAGTool 兼容 action 和 MemoryTool metadata 的回归测试。
-3. 写第一个 spec：`docs/specs/001-document-ingestion.md`。
-4. 新建 FastAPI skeleton，但只做 health、workspace、document 三个最小接口。
-5. 定义数据库 schema 初稿，并明确 `source_documents`、`document_chunks` 与 Qdrant payload 的对应关系。
+3. 已完成：新增 `AGENTS.md`、`.opencodereview/rule.json`、`docs/AGENT_COLLABORATION_PLAYBOOK.md`，把 Agent 协作开发前移为全阶段机制。
+4. 写阶段 1 第一份 spec：`docs/02-stage-1-self-host-platform/specs/001-self-host-platform-skeleton.md`。
+5. 在阶段 1 spec/ADR 确认后端技术栈后，新建后端 skeleton，先只做 health、workspace 和配置检查等最小接口。
+6. 定义数据库 schema 初稿，并明确后续 `source_documents`、`document_chunks` 与 Qdrant payload 的对应关系。
 
 第 2 周：
 
@@ -651,6 +688,7 @@ RAGAS 这类工具已经把 RAG 和 agent/tool use 评测拆成 context precisio
 3. 做 agent run/tool call 日志。
 4. 接入一个 eval 集：资料问答 10 条。
 5. 写第一份 ADR：为什么第一版 Neo4j 后置。
+6. 选一个小功能完整跑通 `spec -> Codex implement -> OCR review -> fix -> pytest`，作为第一篇协作开发案例。
 
 这个节奏能快速从框架 demo 过渡到“可用平台雏形”。
 
@@ -710,3 +748,10 @@ RAGAS 这类工具已经把 RAG 和 agent/tool use 评测拆成 context precisio
 - `examples/chapter08_memory_rag.py`
 - `examples/chapter09_context_engineering.py`
 - `tests/test_tools_core.py`
+- `AGENTS.md`
+- `.opencodereview/rule.json`
+- `docs/AGENT_COLLABORATION_PLAYBOOK.md`
+- `docs/SELF_HOST_DEVELOPMENT_ROADMAP.md`
+- `docs/DATABASE_AND_DEPLOYMENT_PLAN.md`
+- `C:\Users\Admin\.codex\skills\ocr-codex-app\SKILL.md`
+- `C:\Users\Admin\.codex\skills\ocr-codex-app\references\ocr-cli-reference.md`
