@@ -23,6 +23,7 @@
 - Spec：`specs/001-self-host-platform-skeleton.md`
 - ADR：`adr/001-stage-1-application-stack.md`
 - OCR/CR review 记录模板：`reviews/README.md`
+- Self-host 运行说明：`SELF_HOST_RUNBOOK.md`
 
 ## 本阶段不做什么
 
